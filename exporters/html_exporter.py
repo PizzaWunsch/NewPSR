@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Dict
 
 
-def export_html(out_dir: str, title: str = "Bedienungsanleitung"):
+def export_html(out_dir: str, title: str = "Anleitung (PSR-ähnlich)"):
     steps_path = os.path.join(out_dir, "steps.json")
     if not os.path.exists(steps_path):
         raise FileNotFoundError(f"steps.json not found in {out_dir}")
@@ -17,6 +17,7 @@ def export_html(out_dir: str, title: str = "Bedienungsanleitung"):
     monitors = {m["index"]: m for m in data.get("monitors", [])}
     video_enabled = bool(data.get("video_enabled"))
     video_dir = data.get("video_dir")
+    delay_ms = int(data.get("screenshot_delay_ms") or 0)
 
     def mon_label(idx: int | None) -> str:
         if not idx or idx not in monitors:
@@ -27,25 +28,26 @@ def export_html(out_dir: str, title: str = "Bedienungsanleitung"):
     items = []
     step_no = 0
     for e in events:
-        if e["kind"] in ("mouse_click", "key_press", "note"):
+        if e.get("kind") in ("mouse_click", "key_press", "note"):
             step_no += 1
+            text = e.get("instruction") or e.get("detail") or ""
             img_html = ""
             if e.get("screenshot"):
                 img_html = f'<div class="img"><img src="{e["screenshot"]}" alt="Step {step_no}"></div>'
 
             mtxt = ""
             if e.get("monitor_index") is not None:
-                mtxt = f'<div class="mon">{mon_label(e["monitor_index"])}</div>'
+                mtxt = f'<div class="mon">{mon_label(e.get("monitor_index"))}</div>'
 
             items.append(
                 f"""
                 <div class="step">
                   <div class="meta">
                     <div class="nr">Schritt {step_no}</div>
-                    <div class="time">{float(e["t"]):0.2f}s</div>
+                    <div class="time">{float(e.get("t", 0.0)):0.2f}s</div>
                   </div>
                   {mtxt}
-                  <div class="text">{e["detail"]}</div>
+                  <div class="text">{text}</div>
                   {img_html}
                 </div>
                 """
@@ -69,12 +71,9 @@ def export_html(out_dir: str, title: str = "Bedienungsanleitung"):
                     """
                 )
         if parts:
-            video_block = f"""
-            <h2>Screenrecordings</h2>
-            {''.join(parts)}
-            """
+            video_block = f"<h2>Screenrecordings</h2>{''.join(parts)}"
 
-    html_path = os.path.join(out_dir, "page.html")
+    html_path = os.path.join(out_dir, "anleitung.html")
     html = f"""<!doctype html>
 <html lang="de">
 <head>
@@ -99,10 +98,8 @@ def export_html(out_dir: str, title: str = "Bedienungsanleitung"):
 </head>
 <body>
   <h1>{title}</h1>
-  <div class="sub">Erstellt am {datetime.now().strftime("%d.%m.%Y %H:%M")}. Stop: <code>ESC</code></div>
-
+  <div class="sub">Erstellt am {datetime.now().strftime("%d.%m.%Y %H:%M")}. Screenshot-Verzögerung: <code>{delay_ms} ms</code></div>
   {video_block}
-
   <h2>Schritte</h2>
   {''.join(items) if items else "<p>Keine Schritte aufgezeichnet.</p>"}
 </body>

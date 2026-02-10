@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import os
 import time
 import json
@@ -23,6 +24,7 @@ class PSRLikeRecorder:
         screenshot_on_keys: Tuple[str, ...] = ("enter", "tab"),
         enable_video: bool = False,
         video_fps: int = 8,
+        screenshot_delay_ms: int = 0,
     ):
         self.out_dir = out_dir
         self.img_dir = os.path.join(out_dir, "images")
@@ -38,6 +40,7 @@ class PSRLikeRecorder:
 
         self.enable_video = enable_video
         self.video_fps = video_fps
+        self.screenshot_delay_ms = max(0, int(screenshot_delay_ms))
 
         self.running = False
         self._start_time: Optional[float] = None
@@ -59,7 +62,6 @@ class PSRLikeRecorder:
 
         self.running = True
         self._start_time = time.time()
-
         self.events.append(StepEvent(0.0, "start", "Recording started"))
 
         self._mouse_listener = mouse.Listener(on_click=self._on_click)
@@ -81,13 +83,12 @@ class PSRLikeRecorder:
             self._keyboard_listener.stop()
 
         self._video.stop()
-
         self._save_steps_json()
 
     def add_note(self, text: str, with_screenshot: bool = True):
         ss = None
-        if with_screenshot:
-            ss = self._capture_monitor_screenshot(self.monitors[0], rel_xy=None)
+        if with_screenshot and self.monitors:
+            ss = self._capture_monitor_screenshot(self.monitors[0], rel_xy=None, delay_ms=self.screenshot_delay_ms)
         self.events.append(StepEvent(self._now_rel(), "note", text, screenshot=ss))
 
     def _save_steps_json(self):
@@ -98,11 +99,15 @@ class PSRLikeRecorder:
             "events": [e.__dict__ for e in self.events],
             "video_enabled": self.enable_video,
             "video_dir": "video" if self.enable_video else None,
+            "screenshot_delay_ms": self.screenshot_delay_ms,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    def _capture_monitor_screenshot(self, mon: MonitorInfo, rel_xy: Optional[Tuple[int, int]]) -> str:
+    def _capture_monitor_screenshot(self, mon: MonitorInfo, rel_xy: Optional[Tuple[int, int]], delay_ms: int = 0) -> str:
+        if delay_ms and delay_ms > 0:
+            time.sleep(delay_ms / 1000.0)
+
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = f"m{mon.index}_{ts}.png"
         abs_path = os.path.join(self.img_dir, filename)
@@ -110,33 +115,32 @@ class PSRLikeRecorder:
         bbox = {"left": mon.left, "top": mon.top, "width": mon.width, "height": mon.height}
         shot = self._sct.grab(bbox)
         img = Image.frombytes("RGB", shot.size, shot.rgb)
-
         img = mark_click(img, rel_xy)
-
         img.save(abs_path)
+
         return os.path.relpath(abs_path, self.out_dir)
 
     def _on_click(self, x, y, button, pressed):
         if not self.running or not pressed:
             return
 
-        found = find_monitor_for_point(self.monitors, x, y)
+        found = find_monitor_for_point(self.monitors, int(x), int(y))
         mon = found[0] if found else None
-        rel_x, rel_y = found[1], found[2] if found else (None, None)
+        rel_x, rel_y = (found[1], found[2]) if found else (None, None)
 
         ss = None
         if self.screenshot_on_click and mon:
-            ss = self._capture_monitor_screenshot(mon, (rel_x, rel_y))
+            ss = self._capture_monitor_screenshot(mon, (rel_x, rel_y), delay_ms=self.screenshot_delay_ms)
 
-        detail = f"Click {button} at ({x},{y})"
+        detail = f"Click {button} at ({int(x)},{int(y)})"
         self.events.append(
             StepEvent(
                 t=self._now_rel(),
                 kind="mouse_click",
                 detail=detail,
                 monitor_index=mon.index if mon else None,
-                x=x,
-                y=y,
+                x=int(x),
+                y=int(y),
                 rel_x=rel_x if mon else None,
                 rel_y=rel_y if mon else None,
                 screenshot=ss,
@@ -157,8 +161,8 @@ class PSRLikeRecorder:
             return False
 
         ss = None
-        if k in self.screenshot_on_keys:
-            ss = self._capture_monitor_screenshot(self.monitors[0], rel_xy=None)
+        if k in self.screenshot_on_keys and self.monitors:
+            ss = self._capture_monitor_screenshot(self.monitors[0], rel_xy=None, delay_ms=self.screenshot_delay_ms)
 
         important = (k in self.screenshot_on_keys) or (k in ("ctrl_l", "ctrl_r", "alt_l", "alt_r"))
         if important:
