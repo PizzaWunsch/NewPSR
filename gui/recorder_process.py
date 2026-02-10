@@ -1,3 +1,4 @@
+# gui/recorder_process.py
 from __future__ import annotations
 
 import os
@@ -85,6 +86,7 @@ def recorder_worker(conn, config: Dict[str, Any]):
                     enable_video=bool(config.get("enable_video", False)),
                     video_fps=int(config.get("video_fps", 8)),
                     screenshot_delay_ms=int(config.get("screenshot_delay_ms", 0)),
+                    record_text_input=bool(config.get("record_text_input", True)),
                 )
 
                 original_on_click = rec._on_click
@@ -105,6 +107,7 @@ def recorder_worker(conn, config: Dict[str, Any]):
                             "monitors": [asdict(m) for m in rec.monitors],
                             "video": rec.enable_video,
                             "delay_ms": rec.screenshot_delay_ms,
+                            "record_text_input": rec.record_text_input,
                         }
                     )
                 except Exception as e:
@@ -129,17 +132,6 @@ def recorder_worker(conn, config: Dict[str, Any]):
                     send({"type": "stopped", "out_dir": out_dir, "out_path": out_path, "format": fmt})
                 except Exception as e:
                     send({"type": "stopped", "out_dir": out_dir, "out_path": None, "format": fmt, "export_error": str(e)})
-
-            elif ctype == "note":
-                if not rec or not rec.running:
-                    send({"type": "error", "message": "Recorder läuft nicht."})
-                    continue
-                text = cmd.get("text", "").strip() or "(Notiz ohne Text)"
-                try:
-                    rec.add_note(text, with_screenshot=True)
-                    send({"type": "note_ok"})
-                except Exception as e:
-                    send({"type": "error", "message": f"Notiz fehlgeschlagen: {e}"})
 
             elif ctype == "ping":
                 send({"type": "pong", "running": bool(rec and rec.running), "out_dir": out_dir})

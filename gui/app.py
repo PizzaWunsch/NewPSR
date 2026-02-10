@@ -1,3 +1,4 @@
+# gui/app.py
 from __future__ import annotations
 
 import os
@@ -16,8 +17,8 @@ class RecorderGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("PSR-like Recorder")
-        self.geometry("680x460")
-        self.minsize(600, 400)
+        self.geometry("680x420")
+        self.minsize(600, 360)
 
         self.var_video = tk.BooleanVar(value=False)
         self.var_fps = tk.IntVar(value=8)
@@ -73,17 +74,9 @@ class RecorderGUI(tk.Tk):
 
         self.btn_start = ttk.Button(btns, text="Start", command=self.start_recording)
         self.btn_stop = ttk.Button(btns, text="Stop", command=self.stop_recording, state="disabled")
-        self.btn_note = ttk.Button(btns, text="Notiz + Screenshot", command=self.add_note, state="disabled")
 
         self.btn_start.pack(side="left")
         self.btn_stop.pack(side="left", padx=10)
-        self.btn_note.pack(side="left")
-
-        note_frame = ttk.LabelFrame(root, text="Notiztext")
-        note_frame.pack(fill="both", expand=True, pady=8)
-
-        self.note_text = tk.Text(note_frame, height=6)
-        self.note_text.pack(fill="both", expand=True, padx=10, pady=10)
 
         ttk.Label(root, text="Klicks innerhalb dieses Fensters werden während der Aufnahme ignoriert.", foreground="#666").pack(anchor="w", pady=(6, 0))
 
@@ -103,6 +96,7 @@ class RecorderGUI(tk.Tk):
             "screenshot_on_keys": ("enter", "tab"),
             "output_format": (self.var_format.get() or "html").lower(),
             "screenshot_delay_ms": int(self.var_delay.get()),
+            "record_text_input": True,
         }
 
         proc = mp.Process(target=recorder_worker, args=(child_conn, config), daemon=True)
@@ -183,7 +177,6 @@ class RecorderGUI(tk.Tk):
         elif mtype == "started":
             self.btn_start.config(state="disabled")
             self.btn_stop.config(state="normal")
-            self.btn_note.config(state="normal")
             self._start_ts = time.time()
             if self.worker_conn:
                 self._send({"type": "set_exclude_rect", "rect": self._window_rect()})
@@ -192,7 +185,6 @@ class RecorderGUI(tk.Tk):
             self._start_ts = None
             self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
-            self.btn_note.config(state="disabled")
 
             out_path = msg.get("out_path")
             fmt = (msg.get("format") or "html").upper()
@@ -214,27 +206,18 @@ class RecorderGUI(tk.Tk):
             self._start_ts = None
             self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
-            self.btn_note.config(state="disabled")
             self.status.config(text="Status: Worker abgestürzt (fatal).")
             messagebox.showerror("Worker fatal", trace[:4000] or "Fatal error")
 
     def start_recording(self):
         ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.out_dir = os.path.join(os.getcwd(), f"psr_like_{ts}")
-
         self._restart_worker_with_current_config()
         self._send({"type": "set_exclude_rect", "rect": self._window_rect()})
         self._send({"type": "start", "out_dir": self.out_dir})
 
     def stop_recording(self):
         self._send({"type": "stop"})
-
-    def add_note(self):
-        txt = self.note_text.get("1.0", "end").strip()
-        if not txt:
-            txt = "(Notiz ohne Text)"
-        self._send({"type": "note", "text": txt})
-        self.note_text.delete("1.0", "end")
 
     def _on_close(self):
         try:

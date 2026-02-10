@@ -1,3 +1,4 @@
+# psr/models.py
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
@@ -26,3 +27,5 @@ class StepEvent:
     rel_x: Optional[int] = None
     rel_y: Optional[int] = None
     screenshot: Optional[str] = None
+    input_text: Optional[str] = None
+    instruction: Optional[str] = None

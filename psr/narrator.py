@@ -1,3 +1,4 @@
+# psr/narrator.py
 from __future__ import annotations
 
 import re
@@ -33,6 +34,7 @@ def _human_key(detail: str) -> str:
         "tab": "Tab",
         "esc": "Esc",
         "space": "Leertaste",
+        "backspace": "Backspace",
         "ctrl_l": "Strg",
         "ctrl_r": "Strg",
         "alt_l": "Alt",
@@ -50,28 +52,34 @@ def _human_key(detail: str) -> str:
 def generate_instruction(event: Dict[str, Any]) -> str:
     kind = (event.get("kind") or "").lower()
     detail = event.get("detail") or ""
-    if kind == "note":
-        t = detail.strip()
-        return t if t else "Füge eine Notiz hinzu."
+
+    if kind == "text_input":
+        txt = event.get("input_text") or ""
+        if txt:
+            return f"Gib folgenden Text ein: {txt}"
+        return "Gib Text ein."
+
     if kind == "mouse_click":
         b = _human_button(detail)
         xy = _extract_xy(detail)
         mon = event.get("monitor_index")
         if xy and mon:
-            return f"Führe einen {b} auf Monitor {mon} bei Position ({xy[0]},{xy[1]}) aus."
+            return f"Klicke auf Monitor {mon} an Position ({xy[0]},{xy[1]})."
         if xy:
-            return f"Führe einen {b} bei Position ({xy[0]},{xy[1]}) aus."
+            return f"Klicke an Position ({xy[0]},{xy[1]})."
         return f"Führe einen {b} aus."
+
     if kind == "key_press":
         k = _human_key(detail)
         return f"Drücke {k}."
+
     return detail.strip() or "Führe den Schritt aus."
 
 
 def enrich_steps_json(data: Dict[str, Any]) -> Dict[str, Any]:
     events = data.get("events") or []
     for e in events:
-        if isinstance(e, dict) and e.get("kind") in ("mouse_click", "key_press", "note"):
+        if isinstance(e, dict) and e.get("kind") in ("mouse_click", "key_press", "text_input"):
             e["instruction"] = generate_instruction(e)
     data["events"] = events
     return data
