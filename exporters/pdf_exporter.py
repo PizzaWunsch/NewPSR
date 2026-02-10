@@ -12,7 +12,6 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RL
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT
 
-
 def export_pdf(out_dir: str, title: str = "Schritt-für-Schritt Anleitung"):
     steps_path = os.path.join(out_dir, "steps.json")
     if not os.path.exists(steps_path):

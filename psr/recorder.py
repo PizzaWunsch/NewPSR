@@ -109,7 +109,12 @@ class PSRLikeRecorder:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    def _capture_monitor_screenshot(self, mon: MonitorInfo, rel_xy: Optional[Tuple[int, int]], delay_ms: int = 0) -> str:
+    def _capture_monitor_screenshot(
+            self,
+            mon: MonitorInfo,
+            rel_xy: Optional[Tuple[int, int]],
+            delay_ms: int = 0,
+    ) -> str:
         if delay_ms and delay_ms > 0:
             time.sleep(delay_ms / 1000.0)
 
@@ -117,8 +122,17 @@ class PSRLikeRecorder:
         filename = f"m{mon.index}_{ts}.png"
         abs_path = os.path.join(self.img_dir, filename)
 
-        bbox = {"left": mon.left, "top": mon.top, "width": mon.width, "height": mon.height}
-        shot = self._sct.grab(bbox)
+        bbox = {
+            "left": mon.left,
+            "top": mon.top,
+            "width": mon.width,
+            "height": mon.height,
+        }
+
+        import mss
+        with mss.mss() as sct:
+            shot = sct.grab(bbox)
+
         img = Image.frombytes("RGB", shot.size, shot.rgb)
         img = mark_click(img, rel_xy)
         img.save(abs_path)
