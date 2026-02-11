@@ -30,6 +30,28 @@ def recorder_worker(conn, config: Dict[str, Any]):
         l, t, r, b = exclude_rect
         return l <= x < r and t <= y < b
 
+    def _monitors_to_jsonable():
+        if not rec or not getattr(rec, "monitors", None):
+            return []
+        ms = []
+        for m in rec.monitors:
+            d = asdict(m) if hasattr(m, "__dict__") or hasattr(m, "__dataclass_fields__") else dict(m)
+            if all(k in d for k in ("left", "top", "width", "height")):
+                l = int(d["left"])
+                t = int(d["top"])
+                r = l + int(d["width"])
+                b = t + int(d["height"])
+                ms.append({"left": l, "top": t, "right": r, "bottom": b})
+            elif all(k in d for k in ("x", "y", "width", "height")):
+                l = int(d["x"])
+                t = int(d["y"])
+                r = l + int(d["width"])
+                b = t + int(d["height"])
+                ms.append({"left": l, "top": t, "right": r, "bottom": b})
+            elif all(k in d for k in ("left", "top", "right", "bottom")):
+                ms.append({"left": int(d["left"]), "top": int(d["top"]), "right": int(d["right"]), "bottom": int(d["bottom"])})
+        return ms
+
     def apply_narration(_out_dir: str):
         p = os.path.join(_out_dir, "steps.json")
         if not os.path.exists(p):
@@ -37,17 +59,28 @@ def recorder_worker(conn, config: Dict[str, Any]):
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
 
+        if not data.get("monitors"):
+            data["monitors"] = _monitors_to_jsonable()
+
         data = enrich_steps_json(data)
 
-        # Optional: Enter-Screenshots entfernen (wie du es wolltest)
         events = data.get("events") or []
+        prev_kind: Optional[str] = None
+
         for e in events:
-            if (
-                isinstance(e, dict)
-                and (e.get("kind") == "key_press")
-                and ("enter" in str(e.get("detail") or "").lower())
-            ):
-                e["screenshot"] = None
+            if not isinstance(e, dict):
+                prev_kind = None
+                continue
+
+            kind = (e.get("kind") or "").lower()
+
+            if kind == "key_press":
+                detail = str(e.get("detail") or "").lower()
+                if "enter" in detail and prev_kind == "text_input":
+                    e["screenshot"] = None
+
+            prev_kind = kind
+
         data["events"] = events
 
         with open(p, "w", encoding="utf-8") as f:
