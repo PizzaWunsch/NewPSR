@@ -1,239 +1,440 @@
-# gui/app.py
 from __future__ import annotations
 
 import os
+import sys
 import time
-import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime
+import webbrowser
 import multiprocessing as mp
-from multiprocessing.connection import Connection
-from typing import Optional, Dict, Any
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
 
 from gui.recorder_process import recorder_worker
+from psr.recordings_store import list_recordings, rename_recording, delete_recording, create_recording_dir
+from psr.paths import recordings_root_dir
 
 
-class RecorderGUI(tk.Tk):
+@dataclass
+class AppConfig:
+    enable_video: bool = False
+    video_fps: int = 8
+    screenshot_delay_ms: int = 0
+    record_text_input: bool = True
+
+
+class RecorderGUI:
     def __init__(self):
-        super().__init__()
-        self.title("PSR-like Recorder")
-        self.geometry("680x420")
-        self.minsize(600, 360)
+        self.root = tk.Tk()
+        self.root.title("PSR Recorder")
+        self.root.geometry("1020x640")
 
-        self.var_video = tk.BooleanVar(value=False)
-        self.var_fps = tk.IntVar(value=8)
-        self.var_format = tk.StringVar(value="html")
-        self.var_delay = tk.IntVar(value=250)
+        self.cfg = AppConfig()
+        self._proc: Optional[mp.Process] = None
+        self._parent_conn = None
+        self._child_conn = None
 
-        self.worker_proc: Optional[mp.Process] = None
-        self.worker_conn: Optional[Connection] = None
-
-        self.out_dir: Optional[str] = None
-        self._start_ts: Optional[float] = None
+        self._recording_out_dir: Optional[str] = None
+        self._last_html_path: Optional[str] = None
 
         self._build_ui()
+        self.refresh_recordings()
 
-        self.after(150, self._poll_worker)
-        self.after(250, self._push_exclude_rect)
-
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-
-        self._ensure_worker()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.after(150, self._poll_worker)
 
     def _build_ui(self):
-        root = ttk.Frame(self, padding=14)
-        root.pack(fill="both", expand=True)
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
 
-        ttk.Label(root, text="PSR-ähnliche Aufzeichnung", font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        outer = ttk.Frame(self.root, padding=12)
+        outer.grid(row=0, column=0, sticky="nsew")
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(2, weight=1)
 
-        options = ttk.LabelFrame(root, text="Optionen")
-        options.pack(fill="x", pady=8)
+        top = ttk.Frame(outer)
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        top.columnconfigure(0, weight=1)
 
-        row1 = ttk.Frame(options)
-        row1.pack(fill="x", padx=10, pady=(8, 4))
+        self.status_var = tk.StringVar(value="Bereit.")
+        ttk.Label(top, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
 
-        ttk.Checkbutton(row1, text="Video pro Monitor aufnehmen", variable=self.var_video).pack(side="left")
-        ttk.Label(row1, text="FPS:").pack(side="left", padx=(18, 6))
-        ttk.Spinbox(row1, from_=3, to=30, textvariable=self.var_fps, width=6).pack(side="left")
-
-        ttk.Label(row1, text="Screenshot-Verzögerung (ms):").pack(side="left", padx=(18, 6))
-        ttk.Spinbox(row1, from_=0, to=2000, textvariable=self.var_delay, width=7).pack(side="left")
-
-        row2 = ttk.Frame(options)
-        row2.pack(fill="x", padx=10, pady=(4, 10))
-
-        ttk.Label(row2, text="Export:").pack(side="left")
-        for fmt, label in [("html", "HTML"), ("docx", "DOCX"), ("pdf", "PDF")]:
-            ttk.Radiobutton(row2, text=label, value=fmt, variable=self.var_format).pack(side="left", padx=10)
-
-        self.status = ttk.Label(root, text="Status: bereit")
-        self.status.pack(anchor="w", pady=(10, 6))
-
-        btns = ttk.Frame(root)
-        btns.pack(fill="x", pady=10)
+        btns = ttk.Frame(top)
+        btns.grid(row=0, column=1, sticky="e")
 
         self.btn_start = ttk.Button(btns, text="Start", command=self.start_recording)
         self.btn_stop = ttk.Button(btns, text="Stop", command=self.stop_recording, state="disabled")
+        self.btn_open = ttk.Button(btns, text="Öffnen", command=self.open_selected)
+        self.btn_open_folder = ttk.Button(btns, text="Ordner öffnen", command=self.open_selected_folder)
+        self.btn_rename = ttk.Button(btns, text="Umbenennen", command=self.rename_selected)
+        self.btn_delete = ttk.Button(btns, text="Löschen", command=self.delete_selected)
 
-        self.btn_start.pack(side="left")
-        self.btn_stop.pack(side="left", padx=10)
+        self.btn_start.grid(row=0, column=0, padx=(0, 6))
+        self.btn_stop.grid(row=0, column=1, padx=(0, 12))
+        self.btn_open.grid(row=0, column=2, padx=(0, 6))
+        self.btn_open_folder.grid(row=0, column=3, padx=(0, 12))
+        self.btn_rename.grid(row=0, column=4, padx=(0, 6))
+        self.btn_delete.grid(row=0, column=5)
 
-        ttk.Label(root, text="Klicks innerhalb dieses Fensters werden während der Aufnahme ignoriert.", foreground="#666").pack(anchor="w", pady=(6, 0))
+        cfg = ttk.LabelFrame(outer, text="Aufnahme-Einstellungen", padding=10)
+        cfg.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        cfg.columnconfigure(6, weight=1)
 
-    def _ensure_worker(self):
-        if self.worker_proc and self.worker_proc.is_alive() and self.worker_conn:
-            return
+        self.var_record_text = tk.BooleanVar(value=self.cfg.record_text_input)
+        self.var_enable_video = tk.BooleanVar(value=self.cfg.enable_video)
+        self.var_video_fps = tk.IntVar(value=self.cfg.video_fps)
+        self.var_delay_ms = tk.IntVar(value=self.cfg.screenshot_delay_ms)
+
+        ttk.Checkbutton(cfg, text="Text-Eingaben aufnehmen", variable=self.var_record_text).grid(
+            row=0, column=0, sticky="w", padx=(0, 14)
+        )
+        ttk.Checkbutton(cfg, text="Video aktivieren", variable=self.var_enable_video).grid(
+            row=0, column=1, sticky="w", padx=(0, 14)
+        )
+
+        ttk.Label(cfg, text="FPS").grid(row=0, column=2, sticky="w")
+        ttk.Spinbox(cfg, from_=1, to=60, textvariable=self.var_video_fps, width=6).grid(
+            row=0, column=3, sticky="w", padx=(6, 14)
+        )
+
+        ttk.Label(cfg, text="Screenshot-Delay (ms)").grid(row=0, column=4, sticky="w")
+        ttk.Spinbox(cfg, from_=0, to=5000, increment=50, textvariable=self.var_delay_ms, width=8).grid(
+            row=0, column=5, sticky="w", padx=(6, 14)
+        )
+
+        self.btn_apply_cfg = ttk.Button(cfg, text="Übernehmen", command=self.apply_config)
+        self.btn_apply_cfg.grid(row=0, column=6, sticky="e")
+
+        main = ttk.Frame(outer)
+        main.grid(row=2, column=0, sticky="nsew")
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(1, weight=1)
+
+        ttk.Label(main, text="Recordings (Historie)").grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        cols = ("name", "created", "has_steps", "has_html")
+        self.tree = ttk.Treeview(main, columns=cols, show="headings", selectmode="browse")
+        self.tree.heading("name", text="Name")
+        self.tree.heading("created", text="Geändert")
+        self.tree.heading("has_steps", text="Steps")
+        self.tree.heading("has_html", text="HTML")
+
+        self.tree.column("name", width=560, anchor="w")
+        self.tree.column("created", width=180, anchor="w")
+        self.tree.column("has_steps", width=60, anchor="center")
+        self.tree.column("has_html", width=60, anchor="center")
+
+        ysb = ttk.Scrollbar(main, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=ysb.set)
+
+        self.tree.grid(row=1, column=0, sticky="nsew")
+        ysb.grid(row=1, column=1, sticky="ns")
+
+        self.tree.bind("<Double-1>", lambda e: self.open_selected())
+
+
+    def apply_config(self):
         try:
-            mp.set_start_method("spawn", force=True)
-        except RuntimeError:
-            pass
+            fps = int(self.var_video_fps.get())
+            if fps < 1:
+                fps = 1
 
-        parent_conn, child_conn = mp.Pipe()
+            delay = int(self.var_delay_ms.get())
+            if delay < 0:
+                delay = 0
 
-        config = {
-            "enable_video": bool(self.var_video.get()),
-            "video_fps": int(self.var_fps.get()),
-            "screenshot_on_keys": ("enter", "tab"),
-            "output_format": (self.var_format.get() or "html").lower(),
-            "screenshot_delay_ms": int(self.var_delay.get()),
-            "record_text_input": True,
-        }
+            self.cfg = AppConfig(
+                enable_video=bool(self.var_enable_video.get()),
+                video_fps=fps,
+                screenshot_delay_ms=delay,
+                record_text_input=bool(self.var_record_text.get()),
+            )
 
-        proc = mp.Process(target=recorder_worker, args=(child_conn, config), daemon=True)
-        proc.start()
+            if self._proc and self._proc.is_alive():
+                self._restart_worker()
 
-        self.worker_proc = proc
-        self.worker_conn = parent_conn
-        self.status.config(text="Status: Worker gestartet (bereit)")
-
-    def _restart_worker_with_current_config(self):
-        try:
-            if self.worker_conn:
-                self.worker_conn.send({"type": "quit"})
-        except Exception:
-            pass
-
-        try:
-            if self.worker_proc and self.worker_proc.is_alive():
-                self.worker_proc.join(timeout=1.0)
-        except Exception:
-            pass
-
-        self.worker_conn = None
-        self.worker_proc = None
-        self._ensure_worker()
-
-    def _send(self, msg: Dict[str, Any]):
-        self._ensure_worker()
-        if not self.worker_conn:
-            messagebox.showerror("Fehler", "Worker-Verbindung fehlt.")
-            return
-        try:
-            self.worker_conn.send(msg)
+            self.status_var.set("Einstellungen übernommen.")
         except Exception as e:
-            messagebox.showerror("Fehler", f"Worker-Kommunikation fehlgeschlagen: {e}")
+            messagebox.showerror("Fehler", str(e), parent=self.root)
 
-    def _window_rect(self):
-        self.update_idletasks()
-        x = int(self.winfo_rootx())
-        y = int(self.winfo_rooty())
-        w = int(self.winfo_width())
-        h = int(self.winfo_height())
-        return (x, y, x + w, y + h)
-
-    def _push_exclude_rect(self):
-        if self.worker_conn and self._start_ts is not None:
-            rect = self._window_rect()
-            try:
-                self.worker_conn.send({"type": "set_exclude_rect", "rect": rect})
-            except Exception:
-                pass
-        self.after(250, self._push_exclude_rect)
-
-    def _poll_worker(self):
-        if self._start_ts:
-            elapsed = time.time() - self._start_ts
-            base = os.path.basename(self.out_dir) if self.out_dir else "(kein Ordner)"
-            self.status.config(text=f"Status: läuft… {elapsed:0.1f}s  Ausgabe: {base}")
-
+    def _restart_worker(self):
         try:
-            if self.worker_conn:
-                while self.worker_conn.poll():
-                    msg = self.worker_conn.recv()
-                    self._handle_worker_msg(msg)
-        except EOFError:
-            self.status.config(text="Status: Worker beendet (EOF).")
-        except Exception:
-            pass
-
-        self.after(150, self._poll_worker)
-
-    def _handle_worker_msg(self, msg: Dict[str, Any]):
-        mtype = msg.get("type")
-
-        if mtype == "ready":
-            self.status.config(text="Status: bereit")
-
-        elif mtype == "started":
-            self.btn_start.config(state="disabled")
-            self.btn_stop.config(state="normal")
-            self._start_ts = time.time()
-            if self.worker_conn:
-                self._send({"type": "set_exclude_rect", "rect": self._window_rect()})
-
-        elif mtype == "stopped":
-            self._start_ts = None
-            self.btn_start.config(state="normal")
-            self.btn_stop.config(state="disabled")
-
-            out_path = msg.get("out_path")
-            fmt = (msg.get("format") or "html").upper()
-            export_error = msg.get("export_error")
-
-            if out_path:
-                self.status.config(text=f"Status: gestoppt. {fmt}: {os.path.basename(out_path)}")
-                messagebox.showinfo("Fertig", f"Export erstellt ({fmt}):\n{out_path}")
-            else:
-                self.status.config(text=f"Status: gestoppt. {fmt}: nicht erstellt")
-                if export_error:
-                    messagebox.showerror("Export-Fehler", export_error)
-
-        elif mtype == "error":
-            messagebox.showerror("Fehler", msg.get("message", "Unbekannter Fehler"))
-
-        elif mtype == "fatal":
-            trace = msg.get("trace", "")
-            self._start_ts = None
-            self.btn_start.config(state="normal")
-            self.btn_stop.config(state="disabled")
-            self.status.config(text="Status: Worker abgestürzt (fatal).")
-            messagebox.showerror("Worker fatal", trace[:4000] or "Fatal error")
-
-    def start_recording(self):
-        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.out_dir = os.path.join(os.getcwd(), f"psr_like_{ts}")
-        self._restart_worker_with_current_config()
-        self._send({"type": "set_exclude_rect", "rect": self._window_rect()})
-        self._send({"type": "start", "out_dir": self.out_dir})
-
-    def stop_recording(self):
-        self._send({"type": "stop"})
-
-    def _on_close(self):
-        try:
-            if self.worker_conn:
+            if self._parent_conn:
                 try:
-                    self.worker_conn.send({"type": "quit"})
-                except Exception:
-                    pass
-            if self.worker_proc and self.worker_proc.is_alive():
-                try:
-                    self.worker_proc.join(timeout=1.0)
+                    self._parent_conn.send({"type": "quit"})
                 except Exception:
                     pass
         finally:
-            self.destroy()
+            try:
+                if self._proc and self._proc.is_alive():
+                    self._proc.terminate()
+            except Exception:
+                pass
+
+        try:
+            if self._parent_conn:
+                try:
+                    self._parent_conn.close()
+                except Exception:
+                    pass
+            if self._child_conn:
+                try:
+                    self._child_conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        self._proc = None
+        self._parent_conn = None
+        self._child_conn = None
+
+        self._ensure_worker()
+
+    def refresh_recordings(self):
+        for iid in self.tree.get_children():
+            self.tree.delete(iid)
+
+        items = list_recordings()
+        for it in items:
+            created = time.strftime("%Y-%m-%d %H:%M", time.localtime(it.created_ts))
+            self.tree.insert(
+                "",
+                "end",
+                values=(it.name, created, "✓" if it.has_steps else "", "✓" if it.has_html else ""),
+                tags=(it.path,),
+            )
+
+        if items:
+            first = self.tree.get_children()[0]
+            self.tree.selection_set(first)
+
+    def _selected_path(self) -> Optional[str]:
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        iid = sel[0]
+        tags = self.tree.item(iid, "tags")
+        if tags:
+            return tags[0]
+        return None
+
+    def _ensure_worker(self):
+        if self._proc and self._proc.is_alive():
+            return
+
+        if self._parent_conn:
+            try:
+                self._parent_conn.close()
+            except Exception:
+                pass
+        if self._child_conn:
+            try:
+                self._child_conn.close()
+            except Exception:
+                pass
+
+        self._parent_conn, self._child_conn = mp.Pipe()
+
+        cfg_dict: Dict[str, Any] = {
+            "screenshot_on_keys": (),
+            "enable_video": self.cfg.enable_video,
+            "video_fps": self.cfg.video_fps,
+            "screenshot_delay_ms": self.cfg.screenshot_delay_ms,
+            "record_text_input": self.cfg.record_text_input,
+        }
+
+        self._proc = mp.Process(target=recorder_worker, args=(self._child_conn, cfg_dict), daemon=True)
+        self._proc.start()
+
+    def start_recording(self):
+        try:
+            self._ensure_worker()
+
+            out_dir = create_recording_dir()
+            self._recording_out_dir = out_dir
+
+            self._parent_conn.send({"type": "start", "out_dir": out_dir})
+            self.status_var.set("Starte Recording …")
+            self.btn_start.configure(state="disabled")
+            self.btn_stop.configure(state="normal")
+        except Exception as e:
+            messagebox.showerror("Fehler", str(e), parent=self.root)
+            self.btn_start.configure(state="normal")
+            self.btn_stop.configure(state="disabled")
+
+    def stop_recording(self):
+        try:
+            if not self._parent_conn:
+                return
+            self._parent_conn.send({"type": "stop"})
+            self.status_var.set("Stoppe Recording …")
+            self.btn_stop.configure(state="disabled")
+        except Exception as e:
+            messagebox.showerror("Fehler", str(e), parent=self.root)
+            self.btn_stop.configure(state="normal")
+
+    def open_selected(self):
+        path = self._selected_path()
+        if not path:
+            return
+
+        html = os.path.join(path, "anleitung.html")
+        steps = os.path.join(path, "steps.json")
+
+        if os.path.exists(html):
+            self._last_html_path = html
+            webbrowser.open("file://" + os.path.abspath(html))
+            self.status_var.set("Öffne HTML …")
+            return
+
+        if os.path.exists(steps):
+            self._open_folder(path)
+            self.status_var.set("HTML fehlt – Ordner geöffnet.")
+            return
+
+        messagebox.showwarning(
+            "Hinweis",
+            "In diesem Recording sind keine Dateien (steps.json/anleitung.html) gefunden.",
+            parent=self.root,
+        )
+
+    def open_selected_folder(self):
+        path = self._selected_path()
+        if not path:
+            path = recordings_root_dir()
+        self._open_folder(path)
+        self.status_var.set("Ordner geöffnet.")
+
+    def rename_selected(self):
+        path = self._selected_path()
+        if not path:
+            return
+
+        current_name = os.path.basename(path.rstrip("/\\"))
+        new_name = simpledialog.askstring("Umbenennen", "Neuer Name:", initialvalue=current_name, parent=self.root)
+        if not new_name:
+            return
+
+        try:
+            new_path = rename_recording(path, new_name)
+            self.status_var.set("Umbenannt.")
+            self.refresh_recordings()
+            self._select_by_path(new_path)
+        except Exception as e:
+            messagebox.showerror("Fehler", str(e), parent=self.root)
+
+    def delete_selected(self):
+        path = self._selected_path()
+        if not path:
+            return
+
+        name = os.path.basename(path.rstrip("/\\"))
+        if not messagebox.askyesno("Löschen", f"Recording wirklich löschen?\n\n{name}", parent=self.root):
+            return
+
+        try:
+            delete_recording(path)
+            self.status_var.set("Gelöscht.")
+            self.refresh_recordings()
+        except Exception as e:
+            messagebox.showerror("Fehler", str(e), parent=self.root)
+
+    def _select_by_path(self, path: str):
+        for iid in self.tree.get_children():
+            tags = self.tree.item(iid, "tags")
+            if tags and os.path.abspath(tags[0]) == os.path.abspath(path):
+                self.tree.selection_set(iid)
+                self.tree.see(iid)
+                return
+
+    def _open_folder(self, path: str):
+        try:
+            if sys.platform.startswith("darwin"):
+                os.system(f'open "{path}"')
+            elif os.name == "nt":
+                os.system(f'explorer "{path}"')
+            else:
+                os.system(f'xdg-open "{path}"')
+        except Exception:
+            pass
+
+    # ---------------- Worker polling ----------------
+
+    def _poll_worker(self):
+        try:
+            if self._parent_conn and self._parent_conn.poll():
+                msg = self._parent_conn.recv()
+                self._handle_worker_msg(msg)
+        except Exception:
+            pass
+        finally:
+            self.root.after(120, self._poll_worker)
+
+    def _handle_worker_msg(self, msg: Dict[str, Any]):
+        t = msg.get("type")
+
+        if t == "ready":
+            self.status_var.set("Bereit.")
+            return
+
+        if t == "started":
+            self.status_var.set("Recording läuft … (Stop zum Beenden)")
+            return
+
+        if t == "stopped":
+            out_dir = msg.get("out_dir")
+            out_path = msg.get("out_path")
+            export_error = msg.get("export_error")
+
+            self.btn_start.configure(state="normal")
+            self.btn_stop.configure(state="disabled")
+
+            if export_error:
+                self.status_var.set(f"Recording gestoppt, Export-Fehler: {export_error}")
+            else:
+                self.status_var.set("Recording gestoppt. HTML erstellt.")
+                if out_path and os.path.exists(out_path):
+                    self._last_html_path = out_path
+                    webbrowser.open("file://" + os.path.abspath(out_path))
+
+            self.refresh_recordings()
+            if out_dir:
+                self._select_by_path(out_dir)
+            return
+
+        if t == "error":
+            self.status_var.set("Fehler: " + str(msg.get("message") or ""))
+            return
+
+        if t == "fatal":
+            trace = msg.get("trace") or ""
+            messagebox.showerror("Fatal", trace[:4000] if trace else "Fataler Fehler im Worker.", parent=self.root)
+            self.btn_start.configure(state="normal")
+            self.btn_stop.configure(state="disabled")
+            return
+
+
+    def on_close(self):
+        try:
+            if self._parent_conn:
+                try:
+                    self._parent_conn.send({"type": "quit"})
+                except Exception:
+                    pass
+        finally:
+            try:
+                if self._proc and self._proc.is_alive():
+                    self._proc.terminate()
+            except Exception:
+                pass
+            self.root.destroy()
+
+    def run(self):
+        self.root.mainloop()
 
 
 if __name__ == "__main__":
-    RecorderGUI().mainloop()
+    mp.set_start_method("spawn", force=True)
+    RecorderGUI().run()

@@ -1,4 +1,3 @@
-# psr/recorder.py
 from __future__ import annotations
 
 import os
@@ -15,6 +14,7 @@ from .models import StepEvent, MonitorInfo
 from .monitor import list_monitors, find_monitor_for_point
 from .annotate import mark_click
 from .video import MultiMonitorVideoWriter
+from .window_info import get_active_window_info
 
 
 class PSRLikeRecorder:
@@ -55,11 +55,18 @@ class PSRLikeRecorder:
         self._video = MultiMonitorVideoWriter(self.video_dir, self.monitors, fps=self.video_fps, enabled=self.enable_video)
 
         self._text_buf: str = ""
-        self._last_type_ts: float = 0.0
 
     def _now_rel(self) -> float:
         assert self._start_time is not None
         return time.time() - self._start_time
+
+    def _win(self):
+        info = get_active_window_info() or {}
+        return {
+            "window_title": info.get("window_title"),
+            "app_name": info.get("app_name"),
+            "app_path": info.get("app_path"),
+        }
 
     def start(self):
         if self.running:
@@ -69,15 +76,12 @@ class PSRLikeRecorder:
         self.running = True
         self._start_time = time.time()
         self._text_buf = ""
-        self._last_type_ts = 0.0
 
         self.events.append(StepEvent(0.0, "start", "Recording started"))
-
         self._mouse_listener = mouse.Listener(on_click=self._on_click)
         self._keyboard_listener = keyboard.Listener(on_press=self._on_press)
         self._mouse_listener.start()
         self._keyboard_listener.start()
-
         self._video.start()
 
     def stop(self):
@@ -109,12 +113,7 @@ class PSRLikeRecorder:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    def _capture_monitor_screenshot(
-            self,
-            mon: MonitorInfo,
-            rel_xy: Optional[Tuple[int, int]],
-            delay_ms: int = 0,
-    ) -> str:
+    def _capture_monitor_screenshot(self, mon: MonitorInfo, rel_xy: Optional[Tuple[int, int]], delay_ms: int = 0) -> str:
         if delay_ms and delay_ms > 0:
             time.sleep(delay_ms / 1000.0)
 
@@ -122,17 +121,8 @@ class PSRLikeRecorder:
         filename = f"m{mon.index}_{ts}.png"
         abs_path = os.path.join(self.img_dir, filename)
 
-        bbox = {
-            "left": mon.left,
-            "top": mon.top,
-            "width": mon.width,
-            "height": mon.height,
-        }
-
-        import mss
-        with mss.mss() as sct:
-            shot = sct.grab(bbox)
-
+        bbox = {"left": mon.left, "top": mon.top, "width": mon.width, "height": mon.height}
+        shot = self._sct.grab(bbox)
         img = Image.frombytes("RGB", shot.size, shot.rgb)
         img = mark_click(img, rel_xy)
         img.save(abs_path)
@@ -160,10 +150,7 @@ class PSRLikeRecorder:
         if not self.record_text_input:
             self._text_buf = ""
             return
-        txt = self._text_buf
-        if not txt:
-            return
-        txt = txt.replace("\r", "").replace("\n", "")
+        txt = (self._text_buf or "").replace("\r", "").replace("\n", "")
         if not txt:
             self._text_buf = ""
             return
@@ -175,13 +162,17 @@ class PSRLikeRecorder:
             else:
                 ss = self._capture_primary_no_marker()
 
+        w = self._win()
         self.events.append(
             StepEvent(
                 t=self._now_rel(),
                 kind="text_input",
-                detail=f"Text eingegeben ({reason})",
+                detail=f"Text entered ({reason})",
                 screenshot=ss,
                 input_text=txt,
+                window_title=w.get("window_title"),
+                app_name=w.get("app_name"),
+                app_path=w.get("app_path"),
             )
         )
         self._text_buf = ""
@@ -200,6 +191,7 @@ class PSRLikeRecorder:
         if self.screenshot_on_click and mon:
             ss = self._capture_monitor_screenshot(mon, (rel_x, rel_y), delay_ms=self.screenshot_delay_ms)
 
+        w = self._win()
         detail = f"Click {button} at ({int(x)},{int(y)})"
         self.events.append(
             StepEvent(
@@ -212,17 +204,18 @@ class PSRLikeRecorder:
                 rel_x=rel_x if mon else None,
                 rel_y=rel_y if mon else None,
                 screenshot=ss,
+                window_title=w.get("window_title"),
+                app_name=w.get("app_name"),
+                app_path=w.get("app_path"),
             )
         )
 
     def _append_char(self, ch: str):
         self._text_buf += ch
-        self._last_type_ts = time.time()
 
     def _backspace(self):
         if self._text_buf:
             self._text_buf = self._text_buf[:-1]
-        self._last_type_ts = time.time()
 
     def _on_press(self, key):
         if not self.running:
@@ -252,12 +245,10 @@ class PSRLikeRecorder:
                 self._backspace()
                 return
             if k == "enter":
-                self._flush_text_input(reason="enter", take_screenshot=True,
-                                       monitor_for_screenshot=self.monitors[0] if self.monitors else None)
+                self._flush_text_input(reason="enter", take_screenshot=True, monitor_for_screenshot=self.monitors[0] if self.monitors else None)
                 return
             if k == "tab":
-                self._flush_text_input(reason="tab", take_screenshot=True,
-                                       monitor_for_screenshot=self.monitors[0] if self.monitors else None)
+                self._flush_text_input(reason="tab", take_screenshot=True, monitor_for_screenshot=self.monitors[0] if self.monitors else None)
 
         ss = None
         if k in self.screenshot_on_keys and self.monitors:
@@ -265,4 +256,15 @@ class PSRLikeRecorder:
 
         important = (k in self.screenshot_on_keys) or (k in ("ctrl_l", "ctrl_r", "alt_l", "alt_r"))
         if important:
-            self.events.append(StepEvent(self._now_rel(), "key_press", f"Key: {k}", screenshot=ss))
+            w = self._win()
+            self.events.append(
+                StepEvent(
+                    self._now_rel(),
+                    "key_press",
+                    f"Key: {k}",
+                    screenshot=ss,
+                    window_title=w.get("window_title"),
+                    app_name=w.get("app_name"),
+                    app_path=w.get("app_path"),
+                )
+            )

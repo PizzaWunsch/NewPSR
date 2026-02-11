@@ -1,7 +1,7 @@
-# psr/models.py
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
+
 
 @dataclass
 class MonitorInfo:
@@ -28,3 +28,6 @@ class StepEvent:
     screenshot: Optional[str] = None
     input_text: Optional[str] = None
     instruction: Optional[str] = None
+    window_title: Optional[str] = None
+    app_name: Optional[str] = None
+    app_path: Optional[str] = None

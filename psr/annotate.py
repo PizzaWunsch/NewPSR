@@ -13,7 +13,6 @@ def mark_click(img: Image.Image, rel_xy: Optional[Tuple[int, int]]) -> Image.Ima
 
     cross = 13
 
-
     draw.line((x - cross, y, x + cross, y), fill="red", width=3)
     draw.line((x, y - cross, x, y + cross), fill="red", width=3)
 

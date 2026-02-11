@@ -1,19 +1,7 @@
-# psr/narrator.py
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, Optional
-
-
-def _human_button(detail: str) -> str:
-    d = detail.lower()
-    if "button.left" in d:
-        return "Linksklick"
-    if "button.right" in d:
-        return "Rechtsklick"
-    if "button.middle" in d:
-        return "Mittelklick"
-    return "Klick"
 
 
 def _extract_xy(detail: str) -> Optional[tuple[int, int]]:
@@ -23,8 +11,17 @@ def _extract_xy(detail: str) -> Optional[tuple[int, int]]:
     return int(m.group(1)), int(m.group(2))
 
 
+def _human_button(detail: str) -> str:
+    d = (detail or "").lower()
+    if "button.right" in d:
+        return "Rechtsklick"
+    if "button.middle" in d:
+        return "Mittelklick"
+    return "Klick"
+
+
 def _human_key(detail: str) -> str:
-    d = detail.strip()
+    d = (detail or "").strip()
     m = re.search(r"key:\s*(.+)$", d, re.IGNORECASE)
     if not m:
         return d
@@ -49,31 +46,42 @@ def _human_key(detail: str) -> str:
     return mapping.get(k, k)
 
 
+def _ctx(e: Dict[str, Any]) -> str:
+    app = (e.get("app_name") or "").strip()
+    title = (e.get("window_title") or "").strip()
+    if app and title:
+        return f"{app} ({title})"
+    if app:
+        return f"{app}"
+    if title:
+        return f"{title}"
+    return ""
+
+
 def generate_instruction(event: Dict[str, Any]) -> str:
     kind = (event.get("kind") or "").lower()
     detail = event.get("detail") or ""
+    ctx = _ctx(event)
+    prefix = (ctx + ": ") if ctx else ""
 
     if kind == "text_input":
-        txt = event.get("input_text") or ""
+        txt = (event.get("input_text") or "").strip()
         if txt:
-            return f"Gib folgenden Text ein: {txt}"
-        return "Gib Text ein."
+            return f"{prefix}Text eingeben: {txt}"
+        return f"{prefix}Text eingeben."
 
     if kind == "mouse_click":
         b = _human_button(detail)
         xy = _extract_xy(detail)
-        mon = event.get("monitor_index")
-        if xy and mon:
-            return f"Klicke auf Monitor {mon} an Position ({xy[0]},{xy[1]})."
         if xy:
-            return f"Klicke an Position ({xy[0]},{xy[1]})."
-        return f"Führe einen {b} aus."
+            return f"{prefix}{b} auf den markierten Bereich."
+        return f"{prefix}{b} ausführen."
 
     if kind == "key_press":
         k = _human_key(detail)
-        return f"Drücke {k}."
+        return f"{prefix}Taste drücken: {k}."
 
-    return detail.strip() or "Führe den Schritt aus."
+    return (prefix + (detail.strip() or "Schritt ausführen.")).strip()
 
 
 def enrich_steps_json(data: Dict[str, Any]) -> Dict[str, Any]:
