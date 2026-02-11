@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from datetime import datetime
@@ -13,6 +14,8 @@ def export_html(out_dir: str, title: str = "Anleitung"):
 
     with open(steps_path, "r", encoding="utf-8") as f:
         data: Dict[str, Any] = json.load(f)
+
+    data = _embed_local_screenshots_as_data_urls(data, out_dir)
 
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
     html_path = os.path.join(out_dir, "anleitung.html")
@@ -28,11 +31,9 @@ def export_html(out_dir: str, title: str = "Anleitung"):
   --radius: 14px;
   --radius2: 12px;
   --font: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-
   --shadow: 0 12px 30px rgba(0,0,0,.12);
   --shadow2: 0 8px 18px rgba(0,0,0,.10);
 }}
-
 html[data-theme="dark"] {{
   --bg: #0b0d12;
   --bg2: #0f131a;
@@ -41,19 +42,15 @@ html[data-theme="dark"] {{
   --line: rgba(255,255,255,.14);
   --text: #eef0f6;
   --muted: rgba(238,240,246,.70);
-
   --accent: #4f8cff;
   --danger: #ff4f6d;
   --ok: #3ddc97;
-
   --btn: #1a2230;
   --btnHover: #202a3b;
   --input: #0f1520;
-
   --toastBg: #121621;
   --toastLine: rgba(255,255,255,.14);
 }}
-
 html[data-theme="light"] {{
   --bg: #f6f7fb;
   --bg2: #ffffff;
@@ -62,35 +59,28 @@ html[data-theme="light"] {{
   --line: rgba(0,0,0,.12);
   --text: #0a1022;
   --muted: rgba(10,16,34,.66);
-
   --accent: #2f6fff;
   --danger: #d91e3f;
   --ok: #10a76b;
-
   --btn: #f1f3f8;
   --btnHover: #e8ecf6;
   --input: #ffffff;
-
   --toastBg: #111318;
   --toastLine: rgba(255,255,255,.14);
 }}
-
 * {{ box-sizing: border-box; }}
 html, body {{ height: 100%; }}
-
 body {{
   margin: 0;
   font-family: var(--font);
   color: var(--text);
   background: var(--bg);
 }}
-
 .wrap {{
   max-width: 1120px;
   margin: 0 auto;
   padding: 22px 16px 56px;
 }}
-
 header {{
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -98,7 +88,6 @@ header {{
   padding: 14px;
   box-shadow: var(--shadow);
 }}
-
 .hrow {{
   display: flex;
   flex-wrap: wrap;
@@ -106,11 +95,9 @@ header {{
   align-items: flex-start;
   justify-content: space-between;
 }}
-
 .titlebox {{
   min-width: min(640px, 100%);
 }}
-
 h1 {{
   margin: 0;
   font-size: 1.45rem;
@@ -118,13 +105,11 @@ h1 {{
   line-height: 1.2;
   outline: none;
 }}
-
 .meta {{
   margin-top: 8px;
   color: var(--muted);
   font-size: .95rem;
 }}
-
 .actions {{
   display: flex;
   gap: 10px;
@@ -132,7 +117,6 @@ h1 {{
   align-items: center;
   justify-content: flex-end;
 }}
-
 button {{
   appearance: none;
   border: 1px solid var(--line);
@@ -145,34 +129,30 @@ button {{
   letter-spacing: .1px;
   transition: background .12s ease, border-color .12s ease, transform .08s ease;
 }}
-
 button:hover {{
   background: var(--btnHover);
   border-color: rgba(79,140,255,.55);
 }}
-
 button:active {{
   transform: translateY(1px);
 }}
-
 button.primary {{
   border-color: rgba(79,140,255,.70);
 }}
-
 button.danger {{
   border-color: rgba(255,79,109,.55);
 }}
-
+button.ok {{
+  border-color: rgba(61,220,151,.55);
+}}
 button.ghost {{
   background: transparent;
 }}
-
 main {{
   margin-top: 14px;
   display: grid;
   gap: 12px;
 }}
-
 .card {{
   background: var(--card);
   border: 1px solid var(--line);
@@ -180,14 +160,12 @@ main {{
   padding: 12px;
   box-shadow: var(--shadow2);
 }}
-
 .stephead {{
   display: grid;
   grid-template-columns: 44px 1fr auto;
   gap: 12px;
   align-items: start;
 }}
-
 .badge {{
   width: 42px;
   height: 42px;
@@ -199,13 +177,11 @@ main {{
   border: 1px solid rgba(79,140,255,.55);
   color: var(--text);
 }}
-
 .small {{
   color: var(--muted);
   font-size: .92rem;
   margin-top: 8px;
 }}
-
 .input {{
   width: 100%;
   border: 1px solid var(--line);
@@ -219,19 +195,16 @@ main {{
   resize: vertical;
   min-height: 52px;
 }}
-
 .input:focus {{
   border-color: rgba(79,140,255,.80);
   box-shadow: 0 0 0 3px rgba(79,140,255,.18);
 }}
-
 .rowbtns {{
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }}
-
 .imgwrap {{
   margin-top: 12px;
   border-radius: var(--radius2);
@@ -239,12 +212,10 @@ main {{
   border: 1px solid var(--line);
   background: var(--card2);
 }}
-
 .imgwrap img {{
   width: 100%;
   display: block;
 }}
-
 .imgtools {{
   margin-top: 10px;
   display: flex;
@@ -252,9 +223,7 @@ main {{
   flex-wrap: wrap;
   align-items: center;
 }}
-
 .file {{ display: none; }}
-
 label.filebtn {{
   display: inline-flex;
   align-items: center;
@@ -268,16 +237,13 @@ label.filebtn {{
   font-weight: 650;
   transition: background .12s ease, border-color .12s ease, transform .08s ease;
 }}
-
 label.filebtn:hover {{
   background: var(--btnHover);
   border-color: rgba(79,140,255,.55);
 }}
-
 label.filebtn:active {{
   transform: translateY(1px);
 }}
-
 .toast {{
   position: fixed;
   left: 16px;
@@ -295,16 +261,13 @@ label.filebtn:active {{
   white-space: pre-wrap;
   box-shadow: var(--shadow2);
 }}
-
 .toast.show {{
   opacity: 1;
   transform: translateY(0);
 }}
-
 .dropdown {{
   position: relative;
 }}
-
 .menu {{
   position: absolute;
   right: 0;
@@ -317,11 +280,9 @@ label.filebtn:active {{
   padding: 8px;
   display: none;
 }}
-
 .menu.show {{
   display: block;
 }}
-
 .menu button {{
   width: 100%;
   text-align: left;
@@ -334,17 +295,14 @@ label.filebtn:active {{
   border: 1px solid transparent;
   font-weight: 650;
 }}
-
 .menu button:hover {{
   background: var(--btnHover);
   border-color: var(--line);
 }}
-
 .kbd {{
   font-size: .85rem;
   color: var(--muted);
 }}
-
 @media (max-width: 860px) {{
   .titlebox {{ min-width: 100%; }}
 }}
@@ -360,6 +318,7 @@ label.filebtn:active {{
       </div>
       <div class="actions">
         <button class="ghost" id="btnTheme" title="Theme wechseln">Theme</button>
+        <button class="ok" id="btnAddStep">+ Schritt</button>
         <button class="primary" id="btnSaveLocal">Im Browser speichern</button>
 
         <div class="dropdown">
@@ -452,7 +411,8 @@ function toast(msg) {{
 }}
 
 function normalizeEvents(state) {{
-  const ev = (state.events || []).filter(e => ["mouse_click","key_press","text_input"].includes((e.kind||"")));
+  const allowed = new Set(["mouse_click","key_press","text_input","custom_step"]);
+  const ev = (state.events || []).filter(e => allowed.has((e.kind||"")));
   state.events = ev;
   return state;
 }}
@@ -496,6 +456,32 @@ function buildHtmlFromCurrent() {{
   return "<!doctype html>\\n" + doc.outerHTML;
 }}
 
+function makeCustomEvent() {{
+  return {{
+    kind: "custom_step",
+    instruction: "Neuer Schritt",
+    detail: "",
+    input_text: "",
+    screenshot: null,
+    app_name: "",
+    window_title: ""
+  }};
+}}
+
+function insertStepAt(index) {{
+  const e = makeCustomEvent();
+  const arr = STATE.events || (STATE.events = []);
+  if (index < 0) index = 0;
+  if (index > arr.length) index = arr.length;
+  arr.splice(index, 0, e);
+  saveState(STATE);
+  render();
+  setTimeout(() => {{
+    const ta = document.querySelector('textarea[data-step="' + index + '"]');
+    if (ta) {{ ta.focus(); ta.setSelectionRange(0, ta.value.length); }}
+  }}, 0);
+}}
+
 function render() {{
   const root = document.getElementById("steps");
   root.innerHTML = "";
@@ -526,6 +512,7 @@ function render() {{
     input.className = "input";
     input.rows = 2;
     input.value = getStepText(e);
+    input.dataset.step = String(idx);
     input.addEventListener("input", () => {{
       e.instruction = input.value;
       saveState(STATE);
@@ -540,6 +527,11 @@ function render() {{
 
     const btns = document.createElement("div");
     btns.className = "rowbtns";
+
+    const addBelow = document.createElement("button");
+    addBelow.textContent = "+";
+    addBelow.title = "Neuen Schritt darunter einfügen";
+    addBelow.addEventListener("click", () => insertStepAt(idx + 1));
 
     const up = document.createElement("button");
     up.textContent = "↑";
@@ -578,6 +570,7 @@ function render() {{
       render();
     }});
 
+    btns.appendChild(addBelow);
     btns.appendChild(up);
     btns.appendChild(down);
     btns.appendChild(del);
@@ -639,7 +632,6 @@ function render() {{
     tools.appendChild(file);
 
     card.appendChild(tools);
-
     root.appendChild(card);
   }});
 }}
@@ -652,20 +644,7 @@ async function imgSrcToBytes(src) {{
       const ab = await res.arrayBuffer();
       return new Uint8Array(ab);
     }}
-    const img = new Image();
-    img.decoding = "async";
-    img.src = src;
-    await new Promise((resolve, reject) => {{
-      img.onload = resolve;
-      img.onerror = reject;
-    }});
-    const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth || img.width;
-    canvas.height = img.naturalHeight || img.height;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0);
-    const dataUrl = canvas.toDataURL("image/png");
-    const res = await fetch(dataUrl);
+    const res = await fetch(src);
     const ab = await res.arrayBuffer();
     return new Uint8Array(ab);
   }} catch(e) {{
@@ -712,10 +691,17 @@ async function exportDocx() {{
     if (e.screenshot) {{
       const bytes = await imgSrcToBytes(e.screenshot);
       if (bytes) {{
-        const img = new Image();
-        img.src = e.screenshot;
-        await new Promise((resolve) => {{ img.onload = resolve; img.onerror = resolve; }});
-        const [tw, th] = scaleToFit(img.naturalWidth || 1200, img.naturalHeight || 800, 620, 380);
+        let iw = 1200, ih = 800;
+        try {{
+          const img = new Image();
+          img.decoding = "async";
+          img.src = e.screenshot;
+          await new Promise((resolve) => {{ img.onload = resolve; img.onerror = resolve; }});
+          iw = img.naturalWidth || img.width || iw;
+          ih = img.naturalHeight || img.height || ih;
+        }} catch(ex) {{}}
+
+        const [tw, th] = scaleToFit(iw, ih, 620, 380);
         children.push(new docxApi.Paragraph({{
           children: [new docxApi.ImageRun({{
             data: bytes,
@@ -758,6 +744,10 @@ document.getElementById("btnTheme").addEventListener("click", () => {{
   THEME = next;
   applyTheme(next);
   toast(next === "auto" ? "Theme: automatisch" : ("Theme: " + (next === "dark" ? "dunkel" : "hell")));
+}});
+
+document.getElementById("btnAddStep").addEventListener("click", () => {{
+  insertStepAt((STATE.events || []).length);
 }});
 
 document.getElementById("btnSaveLocal").addEventListener("click", () => {{
@@ -810,6 +800,59 @@ render();
         f.write(html)
 
     return html_path
+
+
+def _embed_local_screenshots_as_data_urls(data: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
+    events = data.get("events") or []
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        shot = e.get("screenshot")
+        if not shot or not isinstance(shot, str):
+            continue
+        if shot.startswith("data:"):
+            continue
+        if shot.startswith("http://") or shot.startswith("https://"):
+            continue
+
+        p = shot
+        if not os.path.isabs(p):
+            p = os.path.join(out_dir, shot)
+        p = os.path.normpath(p)
+
+        try:
+            out_root = os.path.abspath(out_dir)
+            if not os.path.abspath(p).startswith(out_root):
+                continue
+        except Exception:
+            continue
+
+        if not os.path.exists(p):
+            continue
+
+        mime = _guess_mime(p)
+        try:
+            with open(p, "rb") as f:
+                b = f.read()
+            e["screenshot"] = f"data:{mime};base64," + base64.b64encode(b).decode("ascii")
+        except Exception:
+            continue
+
+    data["events"] = events
+    return data
+
+
+def _guess_mime(path: str) -> str:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".png":
+        return "image/png"
+    if ext in (".jpg", ".jpeg"):
+        return "image/jpeg"
+    if ext == ".webp":
+        return "image/webp"
+    if ext == ".gif":
+        return "image/gif"
+    return "application/octet-stream"
 
 
 def _esc(s: str) -> str:
